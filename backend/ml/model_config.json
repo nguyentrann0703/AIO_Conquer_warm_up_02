@@ -1,0 +1,29 @@
+{
+  "model_type": "RandomForestClassifier",
+  "threshold": 0.3,
+  "n_features": 13,
+  "feature_names": [
+    "Shipping Mode_enc",
+    "Days for shipment (scheduled)",
+    "Market_enc",
+    "Order Region_enc",
+    "Category Name_enc",
+    "Customer Segment_enc",
+    "Department Name_enc",
+    "Month",
+    "Day_of_Week",
+    "Is_Peak_Season",
+    "Quarter",
+    "Benefit per order",
+    "Order Item Discount Rate"
+  ],
+  "target": "Late_delivery_risk",
+  "classes": [
+    0,
+    1
+  ],
+  "class_labels": [
+    "On Time",
+    "Late"
+  ]
+}
