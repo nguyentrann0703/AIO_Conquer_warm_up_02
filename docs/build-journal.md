@@ -78,17 +78,56 @@ File: `notebooks/01_eda.ipynb`
 7. Correlation heatmap (allowed numerical features + target)
 8. EDA summary (5 key findings)
 
-#### EDA quick findings (từ dữ liệu đã đọc)
+#### 3.1. Phát hiện vấn đề trong dữ liệu
+
+Trước khi mô hình hóa, phần EDA tập trung vào việc trả lời 3 câu hỏi:
+
+- Dữ liệu có thiếu hoặc bất thường ở đâu không?
+- Biến mục tiêu phân bố như thế nào?
+- Những nhóm nào có dấu hiệu liên quan đến giao trễ?
+
+Các phát hiện chính:
 
 - Target tương đối cân bằng nhưng nghiêng lớp `Late` (~54.83%).
 - Shipping mode có khác biệt tỷ lệ trễ rõ rệt.
 - Market có mức late risk khác nhau (`LATAM`, `Europe`, `Pacific Asia`, `USCA`, `Africa`).
 - Missing lớn ở:
-  - `Product Description` (rỗng toàn bộ)
-  - `Order Zipcode` (thiếu rất nhiều)
+  - `Product Description` rỗng toàn bộ
+  - `Order Zipcode` thiếu rất nhiều
 - Time features từ `order date (DateOrders)` có tiềm năng tín hiệu mùa vụ.
 
-#### Issue đã gặp trong lúc chạy notebook
+#### 3.1.1. Kiểm tra dữ liệu bị thiếu
+
+- `Product Description` bị thiếu 100%, nên không có giá trị sử dụng cho pipeline hiện tại.
+- `Order Zipcode` thiếu rất nhiều, không phù hợp để dùng làm feature ổn định.
+- Các cột được chọn cho modeling nhìn chung không có vấn đề missing nghiêm trọng, nên không cần chiến lược làm sạch quá phức tạp.
+
+#### 3.1.2. Kiểm tra logic nghiệp vụ và leakage
+
+Đây là phần quan trọng nhất của project này. Nhóm không chỉ nhìn vào missing/outlier, mà còn kiểm tra:
+
+- Cột nào thật sự biết được tại thời điểm đặt hàng?
+- Cột nào chỉ xuất hiện sau khi giao xong và sẽ gây leakage nếu đưa vào model?
+
+Các cột bị loại khỏi mô hình vì leakage:
+
+- `Days for shipping (real)`
+- `Delivery Status`
+- `shipping date (DateOrders)`
+- `Late_delivery_risk` (target)
+
+Điểm này là khác biệt rất lớn giữa project hiện tại và nhiều notebook tham khảo trên internet: accuracy có thể thấp hơn, nhưng mô hình thực tế hơn và dùng được trong production.
+
+#### 3.1.3. Kiểm tra pattern để định hướng feature engineering
+
+Phần EDA không chỉ để “vẽ biểu đồ”, mà còn để quyết định sẽ tạo feature gì ở bước preprocessing:
+
+- `Shipping Mode` cho thấy tín hiệu phân loại mạnh.
+- `Market` và `Order Region` gợi ý yếu tố địa lý ảnh hưởng đến rủi ro giao trễ.
+- `order date (DateOrders)` cho thấy có thể tách ra `Month`, `Day_of_Week`, `Quarter`, `Is_Peak_Season`.
+- `Days for shipment (scheduled)` có ý nghĩa nghiệp vụ rõ ràng nên được giữ lại như một biến lõi.
+
+#### Runtime note
 
 - `FileNotFoundError` do working directory notebook khác project root.
 - Đã chỉnh cell load dữ liệu theo hướng path linh hoạt (`dataset/...` và `../dataset/...`).
@@ -101,34 +140,139 @@ Status: `Completed (Notebook drafted, ready to run)`
 
 File: `notebooks/02_preprocessing.ipynb`
 
-#### Pipeline preprocessing đã viết
+#### 3.2. Các bước làm sạch và chuẩn bị dữ liệu
 
-1. Load data + chỉ giữ cột trong allowed list
-2. Feature engineering từ `order date (DateOrders)`:
-   - `Month`
-   - `Day_of_Week`
-   - `Is_Peak_Season`
-   - `Quarter`
-3. Handle missing:
-   - Numerical -> median
-   - Categorical -> `'Unknown'`
-4. LabelEncoder cho categorical columns:
-   - `Shipping Mode`
-   - `Market`
-   - `Order Region`
-   - `Category Name`
-   - `Customer Segment`
-   - `Department Name`
-5. Define `FINAL_FEATURES` (13 features, đúng thứ tự)
-6. Split dữ liệu:
-   - Train 70%
-   - Validation 15%
-   - Test 15%
-   - `stratify=y`, `random_state=42`
-7. Scale numerical bằng `StandardScaler`:
-   - fit trên train only
-   - transform val/test
-8. Verify + save processed data/artifacts
+Khác với ví dụ blog về nhạc, project này không có nhiều bước xóa dòng mạnh tay. Lý do là:
+
+- Mục tiêu chính không phải “lọc dataset để kể chuyện EDA”, mà là chuẩn bị dữ liệu ổn định để train model và deploy API.
+- Nhóm ưu tiên giữ lại càng nhiều đơn hàng càng tốt, miễn là không gây leakage và không tạo lỗi cho pipeline.
+
+Các bước thực hiện:
+
+1. Chỉ giữ lại các cột hợp lệ tại thời điểm đặt hàng.
+2. Loại cột thời gian gốc sau khi đã tách feature cần thiết.
+3. Điền giá trị thiếu thay vì xóa hàng loạt.
+4. Encode categorical để model xử lý được.
+5. Scale đúng các cột số cần thiết.
+6. Split train/validation/test để phục vụ training và đánh giá.
+
+#### 3.2.1. Chọn cột đầu vào
+
+Chỉ các cột dưới đây được giữ lại:
+
+- `Shipping Mode`
+- `Days for shipment (scheduled)`
+- `Market`
+- `Order Region`
+- `Category Name`
+- `Customer Segment`
+- `Department Name`
+- `order date (DateOrders)`
+- `Benefit per order`
+- `Order Item Discount Rate`
+
+Target:
+
+- `Late_delivery_risk`
+
+#### 3.2.2. Feature engineering
+
+Từ `order date (DateOrders)`, nhóm tạo ra 4 feature mới:
+
+- `Month`
+- `Day_of_Week`
+- `Quarter`
+- `Is_Peak_Season`
+
+Sau khi tách xong, cột date gốc bị drop để tránh giữ dữ liệu thô không cần thiết.
+
+#### 3.2.3. Xử lý missing values
+
+Thay vì xóa dòng, pipeline chọn cách giữ dữ liệu:
+
+- Numerical -> điền bằng median
+- Categorical -> điền `'Unknown'`
+
+Cách này phù hợp với bài toán production hơn, vì khi chạy API sau này ta vẫn cần hệ thống chịu được input thiếu hoặc hiếm.
+
+#### 3.2.4. Encode categorical features
+
+Các cột categorical được encode bằng `LabelEncoder`:
+
+- `Shipping Mode`
+- `Market`
+- `Order Region`
+- `Category Name`
+- `Customer Segment`
+- `Department Name`
+
+Điểm quan trọng:
+
+- Mapping được lưu lại trong `encoding_map.json`
+- API backend sẽ dùng lại chính mapping này để đảm bảo inference khớp lúc train
+
+#### 3.2.5. Scale numerical features
+
+Chỉ 3 cột số được scale:
+
+- `Days for shipment (scheduled)`
+- `Benefit per order`
+- `Order Item Discount Rate`
+
+`StandardScaler` chỉ được fit trên train set để tránh leakage.
+
+#### 3.2.6. Train/Validation/Test split
+
+Dữ liệu được chia theo tỉ lệ:
+
+- Train: 70%
+- Validation: 15%
+- Test: 15%
+
+Kèm `stratify=y` để giữ tỷ lệ lớp `Late/On Time` ổn định ở cả 3 tập.
+
+#### 3.2.7. Kết quả đầu ra của bước preprocessing
+
+Sau bước này, project có 2 loại output:
+
+Artifacts cho backend:
+
+- `backend/ml/encoding_map.json`
+- `backend/ml/feature_names.json`
+- `backend/ml/scaler.pkl`
+
+Processed data cho training:
+
+- `dataset/processed/X_train.csv`
+- `dataset/processed/X_val.csv`
+- `dataset/processed/X_test.csv`
+- `dataset/processed/y_train.csv`
+- `dataset/processed/y_val.csv`
+- `dataset/processed/y_test.csv`
+
+#### Mapping: Raw Column -> Transformed Feature -> Reason
+
+| Raw column | Transformed feature | Reason |
+|---|---|---|
+| `Shipping Mode` | `Shipping Mode_enc` | Categorical cần encode để model học được |
+| `Days for shipment (scheduled)` | `Days for shipment (scheduled)` (scaled) | Feature cốt lõi về kế hoạch giao hàng |
+| `Market` | `Market_enc` | Bắt khác biệt rủi ro theo thị trường |
+| `Order Region` | `Order Region_enc` | Tín hiệu địa lý chi tiết hơn `Market` |
+| `Category Name` | `Category Name_enc` | Nhóm sản phẩm có hành vi giao hàng khác nhau |
+| `Customer Segment` | `Customer Segment_enc` | Segment khách hàng ảnh hưởng vận hành đơn |
+| `Department Name` | `Department Name_enc` | Department phản ánh luồng fulfillment khác nhau |
+| `order date (DateOrders)` | `Month` | Bắt seasonality theo tháng |
+| `order date (DateOrders)` | `Day_of_Week` | Bắt pattern theo ngày trong tuần |
+| `order date (DateOrders)` | `Quarter` | Bắt chu kỳ theo quý |
+| `order date (DateOrders)` | `Is_Peak_Season` | Cờ mùa cao điểm (10-12) |
+| `Benefit per order` | `Benefit per order` (scaled) | Tín hiệu tài chính đơn hàng |
+| `Order Item Discount Rate` | `Order Item Discount Rate` (scaled) | Mức discount có thể liên quan rủi ro giao trễ |
+
+Ghi chú:
+
+- Các cột categorical được encode bằng `LabelEncoder` và lưu mapping vào `encoding_map.json`.
+- Chỉ scale 3 cột numerical theo thiết kế pipeline (`scheduled days`, `benefit`, `discount rate`).
+- Scaler được fit trên train set để tránh leakage.
 
 #### Artifacts thiết kế để xuất ra
 
