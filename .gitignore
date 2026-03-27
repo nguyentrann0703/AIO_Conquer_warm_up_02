@@ -3,8 +3,6 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
-dataset/*.csv
-dataset/processed/
 references/
 backend/ml/*.pkl
 .ipynb_checkpoints/
