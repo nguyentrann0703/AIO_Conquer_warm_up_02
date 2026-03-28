@@ -7,7 +7,7 @@ from app.services.ml_service import ml_service
 
 
 class Settings(BaseSettings):
-    frontend_url: str = "http://localhost:3000"
+    frontend_url: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
